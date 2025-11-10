@@ -1,82 +1,249 @@
 #include "tga.h"
+#include "renderer.h"
+#include "colors.h"
 #include <assert.h>
-#include <math.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
 
-typedef struct {
-	uint16_t x;
-	uint16_t y;
-} Vec2;
+const uint MULTFACTOR = 10;
 
 typedef struct {
-	uint8_t b;
-	uint8_t g;
-	uint8_t r;
-	uint8_t a;
-} BGRAColor;
+	double x;
+	double y;
+	double z;
+} OBJVertex;
 
-void set_bgra_at_pos(BGRABuf *buf, Vec2 pos, BGRAColor color)
+typedef struct {
+	OBJVertex *data;
+	size_t len;
+	size_t capacity;
+
+} VertexBuf;
+
+typedef struct {
+	int a1;
+	int b1;
+	int c1;
+
+} Face;
+
+typedef struct {
+	Face *data;
+	size_t len;
+	size_t capacity;
+
+} FaceBuf;
+bool fbuf_append(FaceBuf *fbuf, Face face)
 {
-	uint32_t packed_bgra = (color.a << 24) | (color.r << 16) | (color.g << 8) | color.b;
+	if (fbuf->capacity == 0) {
+		size_t amount = 64;
+		fbuf->data = malloc(sizeof(face) * amount);
+		if (fbuf->data == NULL) {
+			assert(0 == "Buy more ram");
+			return false;
+		}
+		fbuf->capacity = amount;
+	}
+	if (fbuf->len == fbuf->capacity) {
+		size_t amount = fbuf->len * 2;
+		fbuf->data = realloc(fbuf->data, sizeof(face) * amount);
+		if (fbuf->data == NULL) {
+			assert(0 == "Buy more ram");
+			return false;
+		}
+		fbuf->capacity = amount;
+	}
 
-	assert(pos.x <= buf->width);
-	assert(pos.y <= buf->height);
+	fbuf->data[fbuf->len] = face;
+	fbuf->len++;
 
-	buf->data[buf->width * pos.y + pos.x] = packed_bgra;
+	return true;
+}
+bool vbuf_append(VertexBuf *vbuf, OBJVertex vertex)
+{
+	if (vbuf->capacity == 0) {
+		size_t amount = 64;
+		vbuf->data = malloc(sizeof(vertex) * amount);
+		if (vbuf->data == NULL) {
+			assert(0 == "Buy more ram");
+			return false;
+		}
+		vbuf->capacity = amount;
+	}
+	if (vbuf->len == vbuf->capacity) {
+		size_t amount = vbuf->len * 2;
+		vbuf->data = realloc(vbuf->data, sizeof(vertex) * amount);
+		if (vbuf->data == NULL) {
+			assert(0 == "Buy more ram");
+			return false;
+		}
+		vbuf->capacity = amount;
+	}
+
+	vbuf->data[vbuf->len] = vertex;
+	vbuf->len++;
+
+	return true;
 }
 
-void draw_line(BGRABuf *buf, Vec2 start, Vec2 end, BGRAColor color)
+char *read_file_to_malloced_str(const char *filename)
 {
-	Vec2 pos = { 0 };
-	uint diffx = abs(start.x - end.x);
-	uint diffy = abs(start.y - end.y);
-	Vec2 a = { 0 };
-	Vec2 e = { 0 };
-	if (diffy > diffx) {
-		if (end.y < start.y) {
-			a = end;
-			e = start;
-		} else {
-			a = start;
-			e = end;
+	FILE *file = fopen(filename, "rb");
+	if (!file) {
+		perror("Unable to open file");
+		return NULL;
+	}
+
+	fseek(file, 0, SEEK_END);
+	long filesize = ftell(file);
+	fseek(file, 0, SEEK_SET);
+
+	char *buffer = (char *)malloc(filesize + 1);
+	if (!buffer) {
+		perror("Memory allocation failed");
+		fclose(file);
+		return NULL;
+	}
+
+	size_t bytesRead = fread(buffer, 1, filesize, file);
+	buffer[bytesRead] = '\0';
+
+	fclose(file);
+	return buffer;
+}
+
+void obj_parse_face_naive(FILE *f, FaceBuf *fbuf)
+{
+	char current_coord_str[20] = { 0 };
+	size_t current_coord_str_index = 0;
+	char c = 0;
+	size_t bytesRead = fread(&c, sizeof(char), 1, f);
+	Face current_face = { 0 };
+	size_t coord_count = 0;
+	while (bytesRead) {
+		if (current_coord_str_index > 18) {
+			printf("ERROR: incorrect vertex\n");
+			return;
 		}
-		for (uint16_t y = a.y; y <= e.y; ++y) {
-			float t = (y - a.y) / (float)(e.y - a.y);
-			pos.x = round(a.x + t * (e.x - a.x));
-			pos.y = y;
-			set_bgra_at_pos(buf, pos, color);
-		}
-	} else {
-		if (end.x < start.x) {
-			a = end;
-			e = start;
-		} else {
-			a = start;
-			e = end;
+		if (((c == ' ') && current_coord_str_index > 0) || c == '\n' || c == '/') {
+			char *strend = &current_coord_str[current_coord_str_index + 1];
+			int current_val = atoi(current_coord_str);
+			current_coord_str_index = 0;
+			switch (coord_count) {
+			case 0:
+				current_face.a1 = current_val;
+				break;
+			case 1:
+				current_face.b1 = current_val;
+				break;
+			case 2:
+				current_face.c1 = current_val;
+				fbuf_append(fbuf, current_face);
+				return;
+				break;
+			}
+			coord_count++;
+			if (c == '\n')
+				return;
 		}
 
-		for (uint16_t x = a.x; x <= e.x; ++x) {
-			float t = (x - a.x) / (float)(e.x - a.x);
-			pos.x = x;
-			pos.y = round(a.y + t * (e.y - a.y));
-			set_bgra_at_pos(buf, pos, color);
+		if (c >= '0' && c <= '9') {
+			current_coord_str[current_coord_str_index] = c;
+			current_coord_str_index++;
 		}
+
+		bytesRead = fread(&c, sizeof(char), 1, f);
 	}
 }
 
-const BGRAColor BLUE = { 0xFF, 0x00, 0x00, 0xFF };
-const BGRAColor WHITE = { 0xFF, 0xFF, 0xFF, 0xFF };
-const BGRAColor BLACK = { 0x00, 0x00, 0x00, 0xFF };
-const BGRAColor GREEN = { 0x00, 0xFF, 0x00, 0xFF };
-const BGRAColor YELLOW = { 0x00, 0xFF, 0xFF, 0xFF };
-const BGRAColor RED = { 0x00, 0x00, 0xFF, 0xFF };
-
-int main()
+void obj_parse_vertex(FILE *f, VertexBuf *VBuf)
 {
+	char current_coord_str[20] = { 0 };
+	size_t current_coord_str_index = 0;
+	char c = 0;
+	size_t bytesRead = fread(&c, sizeof(char), 1, f);
+	OBJVertex current_vert = { 0 };
+	size_t coord_count = 0;
+	while (bytesRead) {
+		if (current_coord_str_index > 18) {
+			printf("ERROR: incorrect vertex\n");
+			return;
+		}
+		if ((c == ' ' && current_coord_str_index > 0) || c == '\n') {
+			char *strend = &current_coord_str[current_coord_str_index + 1];
+			double current_val = strtod(current_coord_str, &strend);
+			current_coord_str_index = 0;
+			switch (coord_count) {
+			case 0:
+				current_vert.x = current_val;
+				break;
+			case 1:
+				current_vert.y = current_val;
+				break;
+			case 2:
+				current_vert.z = current_val;
+				vbuf_append(VBuf, current_vert);
+				return;
+				break;
+			}
+			coord_count++;
+			if (c == '\n')
+				return;
+		}
+
+		if ((c >= '0' && c <= '9') || c == '-' || c == '.') {
+			current_coord_str[current_coord_str_index] = c;
+			current_coord_str_index++;
+		}
+
+		bytesRead = fread(&c, sizeof(char), 1, f);
+	}
+}
+bool obj_parse_file(const char *filename, VertexBuf *vbuf, FaceBuf *fbuf)
+{
+	FILE *file = fopen(filename, "rb");
+	if (!file) {
+		perror("Unable to open file");
+		return false;
+	}
+
+	char c = 0;
+	size_t bytesRead = fread(&c, sizeof(char), 1, file);
+	while (bytesRead) {
+		if (c == 'v') {
+			bytesRead = fread(&c, sizeof(char), 1, file);
+			if (c == 'n') {
+				//TODO: vertex normals
+			} else if (c == 't') {
+				//TODO: texture vertices
+			} else if (c == ' ') {
+				obj_parse_vertex(file, vbuf);
+			}
+		} else if (c == 'f') {
+			obj_parse_face_naive(file, fbuf);
+		}
+		bytesRead = fread(&c, sizeof(char), 1, file);
+	}
+
+	fclose(file);
+	return true;
+}
+
+int main(int argc, char *argv[])
+{
+	// char *contents = read_file_to_malloced_str("obj/diablo3_pose/diablo3_pose.obj");
+	VertexBuf vbuf = { 0 };
+	FaceBuf fbuf = { 0 };
+	vbuf_append(&vbuf, (OBJVertex){ 0, 0, 0 }); // waste one space so indeces are right
+
+	obj_parse_file("obj/diablo3_pose/diablo3_pose.obj", &vbuf, &fbuf);
+	printf("Vertex count: %zu\n", vbuf.len);
+	printf("Face count: %zu\n", fbuf.len);
+
 	BGRABuf buf = {
 		.width = 64,
 		.height = 64,

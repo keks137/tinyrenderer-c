@@ -21,6 +21,7 @@ int main(int argc, char **argv)
 	nob_cmd_append(&cmd, "-ggdb");
 	nob_cc_inputs(&cmd, SRC_FOLDER "main.c");
 	nob_cc_inputs(&cmd, SRC_FOLDER "tga.c");
+	nob_cc_inputs(&cmd, SRC_FOLDER "renderer.c");
 
 	nob_cmd_append(&cmd, "-lm");
 	nob_cc_output(&cmd, BIN_FOLDER "renderer");

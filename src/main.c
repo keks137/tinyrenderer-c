@@ -1,5 +1,6 @@
 #include "tga.h"
 #include <assert.h>
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -31,10 +32,39 @@ void set_bgra_at_pos(BGRABuf *buf, Vec2 pos, BGRAColor color)
 void draw_line(BGRABuf *buf, Vec2 start, Vec2 end, BGRAColor color)
 {
 	Vec2 pos = { 0 };
-	for (float t = 0; t < 1; t += 0.01) {
-		pos.x = start.x + t * (end.x - start.x);
-		pos.y = start.y + t * (end.y - start.y);
-		set_bgra_at_pos(buf, pos, color);
+	uint diffx = abs(start.x - end.x);
+	uint diffy = abs(start.y - end.y);
+	Vec2 a = { 0 };
+	Vec2 e = { 0 };
+	if (diffy > diffx) {
+		if (end.y < start.y) {
+			a = end;
+			e = start;
+		} else {
+			a = start;
+			e = end;
+		}
+		for (uint16_t y = a.y; y <= e.y; ++y) {
+			float t = (y - a.y) / (float)(e.y - a.y);
+			pos.x = round(a.x + t * (e.x - a.x));
+			pos.y = y;
+			set_bgra_at_pos(buf, pos, color);
+		}
+	} else {
+		if (end.x < start.x) {
+			a = end;
+			e = start;
+		} else {
+			a = start;
+			e = end;
+		}
+
+		for (uint16_t x = a.x; x <= e.x; ++x) {
+			float t = (x - a.x) / (float)(e.x - a.x);
+			pos.x = x;
+			pos.y = round(a.y + t * (e.y - a.y));
+			set_bgra_at_pos(buf, pos, color);
+		}
 	}
 }
 
